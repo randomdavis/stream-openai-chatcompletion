@@ -1,4 +1,6 @@
+# Note: See example.py for a simplified example that just demonstrates simple streamed output
 import openai
+import json
 
 with open('apikey.txt', 'r') as f:
     API_KEY = f.read().strip()
@@ -10,6 +12,13 @@ CHARS_PER_TOKEN = 4  # approximate
 
 conversation_history = []
 
+# Load previous conversations from a file
+try:
+    with open('conversations.json', 'r') as conv_file:
+        conversation_history = json.load(conv_file)
+except FileNotFoundError:
+    pass
+
 
 def count_tokens(messages):
     counter = 0.0
@@ -18,16 +27,22 @@ def count_tokens(messages):
     return int(round(counter))
 
 
+def save_conversations(filename):
+    with open(filename, 'w') as conv_file:
+        json.dump(conversation_history, conv_file, indent=4)
+
+
 def stream_chat_completion(prompt: str, model: str = 'gpt-3.5-turbo', temperature=0.8,
-                           system_prompt: str = "You are a helpful AI assistant."):
+                           system_prompt: str = "You are a helpful AI assistant.", filename='conversations.json'):
     global conversation_history
 
     messages = [{'role': 'system', 'content': system_prompt}] + \
         conversation_history + \
         [{'role': 'user', 'content': prompt}]
 
+    full_message = ""
+
     if count_tokens(messages) >= TOKEN_LIMIT:
-        # Summarize the conversation
         sum_messages = conversation_history + \
             [{'role': 'user', 'content': 'Summarize the entire above conversation'}]
         if count_tokens(sum_messages) < TOKEN_LIMIT:
@@ -37,8 +52,8 @@ def stream_chat_completion(prompt: str, model: str = 'gpt-3.5-turbo', temperatur
                 temperature=temperature,
             )
             conversation_history = [{'role': 'assistant', 'content': response.choices[0].message.content}]
+            save_conversations(filename)
         else:
-            # as a last resort
             while count_tokens(messages) >= TOKEN_LIMIT:
                 messages = messages[1:]
 
@@ -51,7 +66,15 @@ def stream_chat_completion(prompt: str, model: str = 'gpt-3.5-turbo', temperatur
     for chunk in response:
         chunk_message = chunk['choices'][0]['delta']
         text = chunk_message.get('content', '')
+        full_message += text
         yield text
+
+    # Save conversation history
+    conversation_history.extend([
+        {'role': 'user', 'content': prompt},
+        {'role': 'assistant', 'content': full_message}
+    ])
+    save_conversations(filename)
 
 
 def get_full_response(prompt, print_stream=True):
