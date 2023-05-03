@@ -41,7 +41,7 @@ def stream_chat_completion(prompt: str, model: str = 'gpt-3.5-turbo', temperatur
             )
             break
         except openai.error.InvalidRequestError:
-            # truncate conversation
+            # too many tokens. truncate conversation.
             conversation_history = conversation_history[1:]
 
     for chunk in response:
