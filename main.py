@@ -29,7 +29,7 @@ def get_full_response(prompt, print_stream=True):
         if print_stream:
             print(chunk, end='')
 
-    full_reply_content = ''.join([m for m in collected_messages])
+    full_reply_content = ''.join(collected_messages)
     return full_reply_content
 
 
