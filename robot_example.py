@@ -1,27 +1,32 @@
 import asyncio
 import openai
+from gtts import gTTS
+from playsound import playsound
 # import bot
 
 
 # Stubbed bot functions that mimic the real ones but do nothing
 async def move(distance):
-    await asyncio.sleep(1)
     print(f"[move] [{distance}]")
-
-
-async def speak(text_to_speak):
     await asyncio.sleep(1)
-    print(f"[speak] [{text_to_speak}]")
 
 
 async def turn(degrees):
-    await asyncio.sleep(1)
     print(f"[turn] [{degrees}]")
+    await asyncio.sleep(1)
+
+
+async def speak(text_to_speak):
+    print(f"[speak] [{text_to_speak}]")
+    tts = gTTS(text=text_to_speak, lang='en')
+    file_path = f"tts_{hash(text_to_speak)}.mp3"
+    tts.save(file_path)
+    await tts_queue.put(file_path)
 
 
 async def wait(seconds):
-    await asyncio.sleep(seconds)
     print(f"[wait] [{seconds}]")
+    await asyncio.sleep(seconds)
 
 
 with open('apikey.txt', 'r') as f:
@@ -37,7 +42,8 @@ Translate the user's natural language to commands.
 Your messages are in the format:
 command_1(argument_1_1,...,argument_1_n);command_2(argument_2_1,...,argument_2_n);command_m(argument_m_1,...,argument_m_n)
 
-Commands are separated by ';', arguments are separated by ','. Don't split on anything inside double quotes because that's a string arugument.
+Commands are separated by ';', arguments are separated by ','.
+Don't split on anything inside double quotes because that's a string argument.
 
 Commands include: 
 1. [move] [distance (in cm, positive or negative)] (BLOCKING CALL)
@@ -45,9 +51,29 @@ Commands include:
 3. [turn] [degrees] (BLOCKING CALL)
 4. [wait] [seconds] (BLOCKING CALL)
 
-Example input: Draw a 10cm x 10cm square while saying a haiku about robots.
-Example output: speak("Robots work hard all day. Making life much easier. For us humans too");move(10.0);turn(90.0);move(10.0);turn(90.0);move(10.0);turn(90.0);move(10.0);speak(done!)
+Example input:
+Draw a 10cm x 10cm square while saying a haiku about robots.
+Example output:
+speak("Robots work hard all day. Making life much easier. For us humans too");move(10.0);turn(90.0);move(10.0);turn(90.0);move(10.0);turn(90.0);move(10.0);speak(done!)
 """
+
+
+async def play_audio(file_path):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, playsound, file_path)
+
+tts_queue = asyncio.Queue()
+
+
+
+
+
+async def handle_tts_queue():
+    while True:
+        file_path = await tts_queue.get()
+        if file_path is None:
+            break
+        await play_audio(file_path)
 
 
 def get_generator(prompt: str, model: str = 'gpt-3.5-turbo', temperature: float = 0.8,
@@ -165,12 +191,18 @@ async def read_and_enqueue_commands(prompt, queue, print_text=False):
 
 
 async def main():
+    global tts_queue
+    tts_queue = asyncio.Queue()
+    handle_tts_task = asyncio.create_task(handle_tts_queue())
+
     while True:
         prompt = input("Enter prompt: ")
         queue = asyncio.Queue()  # Clear the queue by creating a new instance
         task1 = asyncio.create_task(read_and_enqueue_commands(prompt, queue))
         task2 = asyncio.create_task(execute_commands(queue))
         await asyncio.gather(task1, task2)
+        await tts_queue.put(None)  # Add sentinel value to indicate the end of the stream
+        await handle_tts_task  # Wait for the handle_tts_queue task to finish
 
 
 if __name__ == "__main__":
