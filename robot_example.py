@@ -5,6 +5,9 @@ from playsound import playsound
 import os
 import tempfile
 
+TOKEN_LIMIT = 4097
+CHARS_PER_TOKEN = 4  # approximate
+
 
 def parse_commands(text: str):
     commands = []
@@ -77,6 +80,41 @@ async def get_chunk(generator):
     return chunk
 
 
+def count_tokens(messages):
+    counter = 0.0
+    for message in messages:
+        counter += len(message) / CHARS_PER_TOKEN
+    return int(round(counter))
+
+
+def summarize(message, model='gpt-3.5-turbo', print_during=False):
+    messages = [{"role": "user", "content": f"Please summarize the following message in a sentence: \"{message}\""}]
+
+    full_message = ""
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+        stream=True
+    )
+
+    for chunk in response:
+        chunk_message = chunk['choices'][0]['delta']
+        text = chunk_message.get('content', '')
+        full_message += text
+        if print_during:
+            print(text)
+        yield text
+
+    return full_message
+
+
+def ensure_within_token_limit(messages):
+    while count_tokens(messages) >= TOKEN_LIMIT:
+        message_to_remove = messages.pop(0)
+        summary = summarize(message_to_remove['content'])
+        messages.insert(0, {'role': message_to_remove['role'], 'content': summary})
+
+
 class ChatCompletion:
     main_system_prompt = """
 You are an AI connected to a Robot. 
@@ -108,11 +146,13 @@ Example output:
         openai.api_key = self.api_key
 
     def get_generator(self, prompt: str, model: str = 'gpt-3.5-turbo', temperature: float = 0.8):
-        messages = self.conversation_history + [{'role': 'user', 'content': prompt}]
+        self.conversation_history += [{'role': 'user', 'content': prompt}]
+
+        ensure_within_token_limit(self.conversation_history)
 
         generator = openai.ChatCompletion.create(
             model=model,
-            messages=messages,
+            messages=self.conversation_history,
             temperature=temperature,
             stream=True
         )
