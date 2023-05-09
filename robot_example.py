@@ -5,7 +5,7 @@ from playsound import playsound
 import os
 import tempfile
 
-TOKEN_LIMIT = 4097
+TOKEN_LIMIT = 4096
 CHARS_PER_TOKEN = 4  # approximate
 
 
@@ -66,9 +66,19 @@ class Bot:
             await play_audio(file_path)
             os.remove(file_path)
 
-    def __init__(self):
+    def reset_state(self):
+        # Wait for the previous handle_tts_task to finish, if any
+        if self.handle_tts_task is not None:
+            asyncio.ensure_future(self.handle_tts_task)
+
+        # Clear the tts_queue and create a new handle_tts_task
         self.tts_queue = asyncio.Queue()
         self.handle_tts_task = asyncio.create_task(self.handle_tts_queue())
+
+    def __init__(self):
+        self.tts_queue = asyncio.Queue()
+        self.handle_tts_task = None
+        self.reset_state()  # Call reset_state without 'await' here
 
 
 async def get_chunk(generator):
@@ -128,10 +138,10 @@ Commands are separated by ';', arguments are separated by ','.
 Don't split on anything inside double quotes because that's a string argument.
 
 Commands include: 
-1. [move] [distance (in cm, positive or negative)] (BLOCKING CALL)
-2. [speak] [text_to_speak] (NON-BLOCKING CALL)
-3. [turn] [degrees] (BLOCKING CALL)
-4. [wait] [seconds] (BLOCKING CALL)
+1. move(distance_cm) (BLOCKING CALL)
+2. speak(text_to_speak) (NON-BLOCKING CALL)
+3. turn(degrees) (BLOCKING CALL)
+4. wait(seconds) (BLOCKING CALL)
 
 Example input:
 Draw a 10cm x 10cm square while saying a haiku about robots.
@@ -217,14 +227,11 @@ async def main():
     while True:
         prompt = input("Enter prompt: ")
         queue = asyncio.Queue()  # Clear the queue by creating a new instance
-        bot.tts_queue = asyncio.Queue()  # Clear the tts_queue by creating a new instance
-        bot.handle_tts_task = asyncio.create_task(bot.handle_tts_queue())
+        bot.reset_state()  # Call reset_state without 'await' here
         task1 = asyncio.create_task(chat_completion.read_and_enqueue_commands(prompt, queue))
         task2 = asyncio.create_task(chat_completion.execute_commands(queue))
         await asyncio.gather(task1, task2)
         await bot.tts_queue.put(None)  # Add sentinel value to indicate the end of the stream
-        await bot.handle_tts_task  # Wait for the handle_tts_queue task to finish
-
 
 if __name__ == "__main__":
     asyncio.run(main())
