@@ -45,12 +45,14 @@ async def play_audio(file_path):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, playsound, file_path)
 
+
 async def speak(tts_queue, text_to_speak):
     print(f"[speak] [{text_to_speak}]")
     tts = gTTS(text=text_to_speak, lang='en')
     file_path = os.path.join(tempfile.gettempdir(), f"tts_{hash(text_to_speak)}.mp3")
     tts.save(file_path)
     await tts_queue.put(file_path)
+
 
 class Bot:
     async def handle_tts_queue(self):
@@ -96,7 +98,8 @@ Commands include:
 Example input:
 Draw a 10cm x 10cm square while saying a haiku about robots.
 Example output:
-speak("Robots work hard all day. Making life much easier. For us humans too");move(10.0);turn(90.0);move(10.0);turn(90.0);move(10.0);turn(90.0);move(10.0);turn(90.0);speak("done!")"""
+"""+'speak("Robots work hard all day. Making life much easier. For us humans too");' \
+        'move(10.0);turn(90.0);move(10.0);turn(90.0);move(10.0);turn(90.0);move(10.0);turn(90.0);speak("done!") '
 
     def __init__(self, api_key, bot):
         self.api_key = api_key
