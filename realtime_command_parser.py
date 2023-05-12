@@ -5,6 +5,7 @@ from playsound import playsound
 import os
 import tempfile
 import subprocess
+import shlex
 
 TOKEN_LIMIT = 4096
 CHARS_PER_TOKEN = 4  # approximate
@@ -17,17 +18,40 @@ class Command:
     async def execute(self, command_executor):
         try:
             cmd, args_str = self.cmd_str.split('(', 1)
-            args = args_str.rstrip(')').split(',')
+            # find the last closing parenthesis and extract arguments
+            last_paren_index = args_str.rfind(')')
+            if last_paren_index == -1:
+                raise ValueError("Invalid command format, missing closing parenthesis.")
+            args = args_str[:last_paren_index]
+            # unquote the argument if it starts and ends with quotes
+            if args.startswith('"') and args.endswith('"'):
+                args = args[1:-1]
+            args = args.replace("\\n", "\n")  # replace \\n with \n
             if cmd == "speak":
-                await command_executor.speak(args[0].strip('"'))
+                await command_executor.speak(args)
             elif cmd == "wait":
-                await command_executor.wait(float(args[0]))
+                await command_executor.wait(float(args))
             elif cmd == "run_python":
-                await command_executor.run_python(args[0].strip('"'))
+                output = await command_executor.run_python(args)
+                return output
             elif cmd == "run_shell":
-                await command_executor.run_shell(args[0].strip('"'))
+                output = await command_executor.run_shell(args)
+                return output
         except Exception as e:
             print(f"[error] {e} [command] {self.cmd_str}")
+
+    @classmethod
+    def from_string(cls, cmd_str):
+        # Split the string into tokens, treating quoted strings as single tokens
+        tokens = shlex.split(cmd_str)
+
+        # The command is the first token
+        cmd = tokens[0]
+
+        # The arguments are the rest of the tokens, with any surrounding quotes removed
+        args = [arg.strip('"') for arg in tokens[1:]]
+
+        return cls(f"{cmd}({', '.join(args)})")
 
 
 class CommandExecutor:
@@ -64,42 +88,49 @@ class CommandExecutor:
 
     async def run_python(self, code):
         print(f"[run_python] [{code}]")
-        output = subprocess.getoutput(f"python -c '{code}'")
+        escaped_code = code.replace('"', r'\"')  # only escape double quotes
+        output = subprocess.getoutput(f'python -c "{escaped_code}"')
+        print(output)
         return output
 
     async def run_shell(self, command):
         print(f"[run_shell] [{command}]")
         output = subprocess.getoutput(command)
+        print(output)
         return output
 
 
 class ChatCompletion:
     main_system_prompt = """
-        You are an AI connected to a Windows 10 PC. 
-        You can run one or more commands when asked.
-        Translate the user's natural language to commands.
+You are an AI connected to a Windows 10 PC. 
+Your task is to translate the user's natural language prompts into specific commands.
+The commands you can output are as follows:
 
-        Commands include: 
-        1. speak(text_to_speak) (NON-BLOCKING CALL)
-        2. wait(seconds) (BLOCKING CALL)
-        3. run_python(python_code) (BLOCKING CALL)
-        4. run_shell(shell_command) (BLOCKING CALL)
+1. speak(text_to_speak) - This command initiates text-to-speech conversion. It's a non-blocking call.
+2. wait(seconds) - This command introduces a delay for a specified number of seconds. It's a blocking call.
+3. run_python(python_code) - This command runs a Python script. It's a blocking call.
+4. run_shell(shell_command) - This command runs a shell command. It's a blocking call.
 
-        Example input:
-        Speak a poem about robots and then wait for 5 seconds.
-        Example output:
-        speak("Robots work hard all day. Making life much easier. For us humans too");wait(5)
+You are expected to produce responses in the form of these commands, without any additional text or explanation. The output should strictly be the commands, and nothing else. 
 
-        Example input:
-        Run a python script that prints 'Hello, World!'
-        Example output:
-        run_python("print('Hello, World!')")
+Here are some examples:
 
-        Example input:
-        Run a shell command that prints the current directory.
-        Example output:
-        run_shell("dir")
-        """
+Example 1:
+Input: "Speak a poem about robots and then wait for 5 seconds."
+Output: speak("Robots work hard all day. Making life much easier. For us humans too"'");wait(5)
+
+Example 2:
+Input: "Run a Python script that prints 'Hello, World!'"
+Output: run_python("print(\\'Hello, World!\\')")
+
+Example 3:
+Input: "Run a shell command that prints the current directory."
+Output: run_shell("dir")
+
+Example 4:
+Input: "Get the user's username, last name, and the datetime they last logged in."
+Output: run_python("import getpass; import subprocess; username = getpass.getuser(); lastname = username.split()[1] if len(username.split()) > 1 else \\'\\'; last_login = subprocess.check_output(\\"net user \\" + username.split()[0] + \\" | findstr /B /C:\\"Last logon\\"\\", shell=True).decode().split(\\"Last logon\\")[-1].strip(); print(\\"Username: {}, Last Name: {}, Last Login: {}\\".format(username, lastname, last_login))")
+"""
 
     def __init__(self, api_key, command_executor):
         self.api_key = api_key
@@ -142,21 +173,23 @@ class ChatCompletion:
             if chunk is None:
                 break
             command_text += chunk
-            if ';' in command_text:
-                commands, remainder = command_text.rsplit(';', 1)
-                command_list = commands.split(';')
-                for cmd_str in command_list:
-                    command = Command(cmd_str)
+            inside_command = False
+            command_start = 0
+            for i, char in enumerate(command_text):
+                if char == '"':
+                    inside_command = not inside_command
+                elif char == ';' and not inside_command:
+                    command = Command(command_text[command_start:i])
                     output = await command.execute(self.command_executor)
                     if output:
                         self.conversation_history.append({'role': 'assistant', 'content': output})
                         ensure_within_token_limit(self.conversation_history)
-                command_text = remainder
+                    command_start = i + 1
+            command_text = command_text[command_start:]
 
         # Execute the remaining commands after the end of the stream
-        command_list = command_text.split(';')
-        for cmd_str in command_list:
-            command = Command(cmd_str)
+        if command_text:
+            command = Command(command_text)
             output = await command.execute(self.command_executor)
             if output:
                 self.conversation_history.append({'role': 'assistant', 'content': output})
