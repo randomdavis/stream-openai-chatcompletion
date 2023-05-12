@@ -14,23 +14,23 @@ class Command:
     def __init__(self, cmd_str):
         self.cmd_str = cmd_str
 
-    async def execute(self, bot):
+    async def execute(self, command_executor):
         try:
             cmd, args_str = self.cmd_str.split('(', 1)
             args = args_str.rstrip(')').split(',')
             if cmd == "speak":
-                await bot.speak(args[0].strip('"'))
+                await command_executor.speak(args[0].strip('"'))
             elif cmd == "wait":
-                await bot.wait(float(args[0]))
+                await command_executor.wait(float(args[0]))
             elif cmd == "run_python":
-                await bot.run_python(args[0].strip('"'))
+                await command_executor.run_python(args[0].strip('"'))
             elif cmd == "run_shell":
-                await bot.run_shell(args[0].strip('"'))
+                await command_executor.run_shell(args[0].strip('"'))
         except Exception as e:
             print(f"[error] {e} [command] {self.cmd_str}")
 
 
-class Bot:
+class CommandExecutor:
     async def handle_tts_queue(self):
         while True:
             file_path = await self.tts_queue.get()
@@ -75,7 +75,7 @@ class Bot:
 
 class ChatCompletion:
     main_system_prompt = """
-        You are an AI connected to a Robot. 
+        You are an AI connected to a Windows 10 PC. 
         You can run one or more commands when asked.
         Translate the user's natural language to commands.
 
@@ -98,12 +98,12 @@ class ChatCompletion:
         Example input:
         Run a shell command that prints the current directory.
         Example output:
-        run_shell("pwd")
+        run_shell("dir")
         """
 
-    def __init__(self, api_key, bot):
+    def __init__(self, api_key, command_executor):
         self.api_key = api_key
-        self.bot = bot
+        self.command_executor = command_executor
         self.conversation_history = [{'role': 'system', 'content': self.main_system_prompt}]
         openai.api_key = self.api_key
 
@@ -147,7 +147,7 @@ class ChatCompletion:
                 command_list = commands.split(';')
                 for cmd_str in command_list:
                     command = Command(cmd_str)
-                    output = await command.execute(self.bot)
+                    output = await command.execute(self.command_executor)
                     if output:
                         self.conversation_history.append({'role': 'assistant', 'content': output})
                         ensure_within_token_limit(self.conversation_history)
@@ -157,23 +157,23 @@ class ChatCompletion:
         command_list = command_text.split(';')
         for cmd_str in command_list:
             command = Command(cmd_str)
-            output = await command.execute(self.bot)
+            output = await command.execute(self.command_executor)
             if output:
                 self.conversation_history.append({'role': 'assistant', 'content': output})
                 ensure_within_token_limit(self.conversation_history)
 
 
-class BotController:
-    def __init__(self, api_key, bot=None):
-        if bot is None:
-            self.bot = Bot()
+class PromptController:
+    def __init__(self, api_key, command_executor=None):
+        if command_executor is None:
+            self.command_executor = CommandExecutor()
         else:
-            self.bot = bot
-        self.chat_completion = ChatCompletion(api_key, self.bot)
+            self.command_executor = command_executor
+        self.chat_completion = ChatCompletion(api_key, self.command_executor)
 
     async def handle_prompt(self, prompt):
         queue = asyncio.Queue()  # Clear the queue by creating a new instance
-        self.bot.reset_state()  # Reset the state of the bot
+        self.command_executor.reset_state()  # Reset the state of the command executor
 
         read_task = asyncio.create_task(self.chat_completion.read_and_enqueue_commands(prompt, queue, print_text=True))
         execute_task = asyncio.create_task(self.chat_completion.execute_commands(queue))
@@ -204,10 +204,10 @@ async def play_audio(file_path):
 
 
 async def main():
-    bot = Bot()
+    command_executor = CommandExecutor()
     with open('apikey.txt', 'r') as f:
         api_key = f.read().strip()
-    controller = BotController(api_key, bot)
+    controller = PromptController(api_key, command_executor)
 
     while True:
         prompt = input("Enter prompt: ")
